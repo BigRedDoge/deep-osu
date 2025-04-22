@@ -170,10 +170,10 @@ class BeatmapOsu(Beatmap):
                 pos = Vector2(x, y)
                 time = int(Decimal(split[2]))
 
+                #"""
                 if any(combo_type in obj_type for combo_type in (HitObjectType.NEWCOMBO, HitObjectType.NORMALNEWCOMBO, HitObjectType.SLIDERNEWCOMBO)):
                     h = HitComboOsu(True)
-                    self.hit_objects.append(h)
-
+                #"""
                 if HitObjectType.NORMAL in obj_type:
                     h = HitCircleOsu(pos, time, time)
                     self.circle_count += 1

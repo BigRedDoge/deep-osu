@@ -24,8 +24,6 @@ def tokenize_osu(parsed_osu, vocab, quantizers):
         time_difference_ms = max(0, time_difference_ms) # Ensure non-negative
 
         time_bin = quantizers.quantize_time_shift(time_difference_ms)
-
-        time_bin = quantizers.quantize_time_shift(time_difference_ms)
         time_token_str = f"TIME_SHIFT_{time_bin}"
         time_token_id = vocab.get_id(time_token_str)
 
@@ -39,7 +37,12 @@ def tokenize_osu(parsed_osu, vocab, quantizers):
 
         # Handle different hit object types
         if isinstance(hit_object, HitComboOsu):
-            pass
+            new_combo_id = vocab.get_id("NEW_COMBO")
+            if new_combo_id is not None:
+                token_id_sequence.append(new_combo_id)
+            else:
+                print("NEW_COMBO token not found")
+                continue
         elif isinstance(hit_object, HitCircleOsu):
             pass
         elif isinstance(hit_object, SliderOsu):

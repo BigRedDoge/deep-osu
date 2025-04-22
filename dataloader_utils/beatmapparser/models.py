@@ -16,12 +16,14 @@ class HitComboOsu:
 
 @dataclass
 class HitCircleOsu:
+    #start_combo: bool
     position: Vector2
     start_time: int
     end_time: int
 
 @dataclass
 class SliderOsu:
+    #start_combo: bool
     position: Vector2
     start_time: int
     end_time: int
@@ -30,6 +32,7 @@ class SliderOsu:
 
 @dataclass
 class SpinnerOsu:
+    #start_combo: bool
     start_time: int
     end_time: int
 
