@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# MacOS
+.DS_Store
+
+harmony
+harmony.zip
+
 # C extensions
 *.so
 

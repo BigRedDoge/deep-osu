@@ -1,4 +1,6 @@
-from ..replayparser import Mod
+from mod import Mod
+
+
 def clamp(value, min_, max_):
     assert(max_ >= min_)
     if value > max_:

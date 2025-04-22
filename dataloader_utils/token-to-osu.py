@@ -3,20 +3,10 @@ from dataloader_utils.vocabulary import BeatmapVocabulary
 from dataloader_utils.quantizers import Quantizers
 
 
-class OsuOutputter:
-    def __init__(self, vocabulary: BeatmapVocabulary):
-        self.vocab = vocabulary
-        self.quantizers = vocabulary.quantizers # Access quantization params
-
-    # --- Dequantization Methods ---
-    def _dequantize_time(self, bin_index):
-        """Converts a TIME_SHIFT bin index back to milliseconds (linear)."""
-        if self.quantizers.time_shift_bins <= 1:
-            return 0.0 # Avoid division by zero or negative
-        # Add 0.5 to get the center of the bin's time range
-        # Clamp index just in case
-        clamped_index = max(0, min(bin_index, self.quantizers.time_shift_bins - 1))
-        return (clamped_index + 0.5) * (self.quantizers.max_time_shift_ms / self.quantizers.time_shift_bins)
+class TokenToOsu:
+    def __init__(self, vocab, quantizers):
+        self.vocab = vocab
+        self.quantizers = quantizers
 
     def _dequantize_coord(self, bin_index, dimension="x"):
         """Converts a COORD bin index back to osu! pixels (linear)."""

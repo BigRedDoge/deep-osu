@@ -1,6 +1,6 @@
-from .models import (Beatmap, Vector2, HitCircleOsu, SliderOsu,
+from models import (Beatmap, Vector2, HitCircleOsu, SliderOsu,
     SpinnerOsu, ControlPoint, HitComboOsu)
-from .enums import FileSection, HitObjectType
+from enums import FileSection, HitObjectType
 from decimal import Decimal
 from numpy import float32
 
@@ -172,13 +172,20 @@ class BeatmapOsu(Beatmap):
 
                 #"""
                 if any(combo_type in obj_type for combo_type in (HitObjectType.NEWCOMBO, HitObjectType.NORMALNEWCOMBO, HitObjectType.SLIDERNEWCOMBO)):
-                    h = HitComboOsu(True)
+                    h = HitComboOsu(time, time)
                 #"""
-                if HitObjectType.NORMAL in obj_type:
+                elif HitObjectType.NORMAL in obj_type:
                     h = HitCircleOsu(pos, time, time)
                     self.circle_count += 1
                 elif HitObjectType.SLIDER in obj_type:
                     length = 0
+                    curve_data = split[5].split("|", 1)
+                    curve_type = curve_data[0]  
+                    curve_points = [
+                        Vector2(*map(int, point.split(":")))
+                        for point in curve_data[1].split("|")
+                    ]
+                    
                     repeat_count = int(split[6])
                     if len(split) > 7:
                         length = float(split[7])
@@ -187,7 +194,7 @@ class BeatmapOsu(Beatmap):
                         (100 * self.slider_multiplier) * beat_length) *
                         repeat_count)
                     h = SliderOsu(pos, time, end_time, max(1, repeat_count),
-                        length)
+                        length, curve_type, curve_points)
                     self.slider_count += 1
                 elif HitObjectType.SPINNER in obj_type:
                     end_time = int(split[5])
@@ -195,3 +202,25 @@ class BeatmapOsu(Beatmap):
                     self.spinner_count += 1
                 if h:
                     self.hit_objects.append(h)
+
+if __name__ == '__main__':
+    beatmap = BeatmapOsu("./harmony/harmony-hard.osu")
+    print("Artist: ", beatmap.artist)
+    print("Title: ", beatmap.title)
+    print("Creator: ", beatmap.creator)
+    print("Version: ", beatmap.version)
+    print("Beatmap ID: ", beatmap.beatmap_id)
+    print("Beatmap Set ID: ", beatmap.beatmapset_id)
+    print("HP: ", beatmap.hp)
+    print("CS: ", beatmap.cs)
+    print("OD: ", beatmap.od)
+    print("AR: ", beatmap.ar)
+    print("Slider Multiplier: ", beatmap.slider_multiplier)
+    print("Slider Tick Rate: ", beatmap.slider_tick_rate)
+    print("Slider Scoring Point Distance: ", beatmap.slider_scoring_point_distance)
+    print("Control Points: ", beatmap.control_points)
+    print("Hit Objects: ", beatmap.hit_objects)
+    print("Circle Count: ", beatmap.circle_count)
+    print("Slider Count: ", beatmap.slider_count)
+    print("Spinner Count: ", beatmap.spinner_count)
+    print("Hit Objects Count: ", len(beatmap.hit_objects))

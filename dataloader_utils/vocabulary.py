@@ -3,18 +3,17 @@ import json
 from dataloader_utils.quantizers import Quantizers
 
 class BeatmapVocabulary:
-    def __init__(self, quantizers: Quantizers):
+    def __init__(self, time_shift_bins=64, coord_x_bins=32, coord_y_bins=24, max_slider_repeats=4, spinner_duration_bins=16):
+        self.time_shift_bins = time_shift_bins
+        self.coord_x_bins = coord_x_bins
+        self.coord_y_bins = coord_y_bins
+        self.max_slider_repeats = max_slider_repeats
+        self.spinner_duration_bins = spinner_duration_bins
+        
         # Initialize dictionaries for mapping
         self.token_to_id = {}
         self.id_to_token = {}
         self.vocab_size = 0
-
-        # --- Define Quantization Parameters ---
-        # These are crucial and need to be consistent with the tokenizer logic
-        self.time_shift_bins = quantizers.time_shift_bins
-        self.coord_bins = quantizers.coord_bins
-        self.max_slider_repeats = quantizers.max_slider_repeats # Corresponds to END_SLIDER_0R to END_SLIDER_4R
-        self.spinner_duration_bins = quantizers.spinner_duration_bins
 
         self._build_vocabulary()
 
@@ -46,11 +45,11 @@ class BeatmapVocabulary:
             self._add_token(f"TIME_SHIFT_{i}")
 
         # 3. Coordinate Tokens
-        print(f"Adding {self.coord_bins} X Coordinate Tokens...")
-        for i in range(self.coord_bins):
+        print(f"Adding {self.coord_x_bins} X Coordinate Tokens...")
+        for i in range(self.coord_x_bins):
             self._add_token(f"COORD_X_{i}")
-        print(f"Adding {self.coord_bins} Y Coordinate Tokens...")
-        for i in range(self.coord_bins):
+        print(f"Adding {self.coord_y_bins} Y Coordinate Tokens...")
+        for i in range(self.coord_y_bins):
             self._add_token(f"COORD_Y_{i}")
 
         # 4. Action / Type Tokens
