@@ -6,8 +6,8 @@ class Quantizers:
         self.vocab = vocab
         # Define ranges/parameters for quantization based on vocab or defaults
         self.time_shift_epsilon = 1.0 # Avoid log(0)
-        # Estimate max log value based on a reasonable max time shift (10 seconds)
-        self.max_log_time_shift = math.log2(10000 + self.time_shift_epsilon)
+        # Estimate max log value based on a reasonable max time shift (20 seconds)
+        self.max_log_time_shift = math.log2(20000 + self.time_shift_epsilon)
         self.min_log_time_shift = math.log2(self.time_shift_epsilon)
 
         self.max_spinner_duration_ms = 10000 # Max duration
@@ -79,9 +79,9 @@ class Quantizers:
     def quantize_relative_coord(self, d_coord, axis=None):
         """Quantizes relative coordinate change (dx/dy) by scaling and using absolute bins."""
         # Clamp delta to the defined range [-max_delta, +max_delta]
-        clamped_delta = max(-self.vocab.max_relative_delta, min(d_coord, self.vocab.max_relative_delta))
+        clamped_delta = max(-self.vocab.slider_max_relative_delta, min(d_coord, self.vocab.slider_max_relative_delta))
         # Scale to [0, 1] range
-        scaled_delta = (clamped_delta + self.vocab.max_relative_delta) / (2 * self.vocab.max_relative_delta)
+        scaled_delta = (clamped_delta + self.vocab.slider_max_relative_delta) / (2 * self.vocab.slider_max_relative_delta)
         # Use the absolute coordinate quantizer
         return self.quantize_coord(scaled_delta, axis)
     

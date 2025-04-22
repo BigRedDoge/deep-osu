@@ -1,7 +1,7 @@
 from numpy import float32
 from dataclasses import dataclass, field
 from typing import List, Union
-from utils import clamp
+from .utils import clamp
 
 @dataclass
 class Vector2:
@@ -17,25 +17,25 @@ class HitComboOsu:
 
 @dataclass
 class HitCircleOsu:
-    #start_combo: bool
+    start_combo: bool
     position: Vector2
     start_time: int
     end_time: int
 
 @dataclass
 class SliderOsu:
-    #start_combo: bool
+    start_combo: bool
     position: Vector2
     start_time: int
     end_time: int
     repeat_count: int
     length: float
     curve_type: str
-    curve_points: List[Vector2]
+    curve_points: List[Vector2] = field(default_factory=list)
 
 @dataclass
 class SpinnerOsu:
-    #start_combo: bool
+    start_combo: bool
     start_time: int
     end_time: int
 

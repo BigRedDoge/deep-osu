@@ -1,6 +1,5 @@
 import math
 import json 
-from dataloader_utils.quantizers import Quantizers
 
 class BeatmapVocabulary:
     def __init__(self, time_shift_bins=64, coord_x_bins=32, coord_y_bins=24, max_slider_repeats=4, spinner_duration_bins=16):
@@ -9,6 +8,7 @@ class BeatmapVocabulary:
         self.coord_y_bins = coord_y_bins
         self.max_slider_repeats = max_slider_repeats
         self.spinner_duration_bins = spinner_duration_bins
+        self.slider_max_relative_delta = 128 # Max delta for relative coordinates
         
         # Initialize dictionaries for mapping
         self.token_to_id = {}

@@ -1,6 +1,6 @@
-from models import (Beatmap, Vector2, HitCircleOsu, SliderOsu,
+from .models import (Beatmap, Vector2, HitCircleOsu, SliderOsu,
     SpinnerOsu, ControlPoint, HitComboOsu)
-from enums import FileSection, HitObjectType
+from .enums import FileSection, HitObjectType
 from decimal import Decimal
 from numpy import float32
 
@@ -170,12 +170,15 @@ class BeatmapOsu(Beatmap):
                 pos = Vector2(x, y)
                 time = int(Decimal(split[2]))
 
-                #"""
+                """
                 if any(combo_type in obj_type for combo_type in (HitObjectType.NEWCOMBO, HitObjectType.NORMALNEWCOMBO, HitObjectType.SLIDERNEWCOMBO)):
                     h = HitComboOsu(time, time)
-                #"""
-                elif HitObjectType.NORMAL in obj_type:
-                    h = HitCircleOsu(pos, time, time)
+                """
+                if HitObjectType.NORMAL in obj_type:
+                    if HitObjectType.NEWCOMBO in obj_type:
+                        h = HitCircleOsu(True, pos, time, time)
+                    else:
+                        h = HitCircleOsu(False, pos, time, time)
                     self.circle_count += 1
                 elif HitObjectType.SLIDER in obj_type:
                     length = 0
@@ -193,15 +196,21 @@ class BeatmapOsu(Beatmap):
                     end_time = (time + int(length /
                         (100 * self.slider_multiplier) * beat_length) *
                         repeat_count)
-                    h = SliderOsu(pos, time, end_time, max(1, repeat_count),
-                        length, curve_type, curve_points)
+                    if HitObjectType.NEWCOMBO in obj_type:
+                        h = SliderOsu(True, pos, time, end_time, max(1, repeat_count), length, curve_type, curve_points)
+                    else:
+                        h = SliderOsu(False, pos, time, end_time, max(1, repeat_count), length, curve_type, curve_points)
                     self.slider_count += 1
                 elif HitObjectType.SPINNER in obj_type:
                     end_time = int(split[5])
-                    h = SpinnerOsu(time, end_time)
+                    if HitObjectType.NEWCOMBO in obj_type:
+                        h = SpinnerOsu(True, time, end_time)
+                    else:
+                        h = SpinnerOsu(False, time, end_time)
                     self.spinner_count += 1
                 if h:
                     self.hit_objects.append(h)
+
 
 if __name__ == '__main__':
     beatmap = BeatmapOsu("./harmony/harmony-hard.osu")
