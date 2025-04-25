@@ -1,263 +1,267 @@
-Okay, let's architect the Autoregressive Event Sequence Generation approach step-by-step, making deliberate, well-justified decisions aiming for a balance of performance, expressiveness, and trainability.
+Autoregressive Beatmap Generation Plan (v2)
+===========================================
 
-**Goal:** Generate a sequence of discrete tokens representing an `.osu` beatmap, conditioned on audio features and difficulty settings, using a CNN Encoder + Transformer Decoder architecture.
+This document outlines the plan to create an autoregressive model for generating .osu beatmaps, using a CNN Encoder and Transformer Decoder architecture. This version incorporates the use of the osu-parsers Node.js library for parsing input .osu files and encoding generated data back into the .osu format, including support for timing point tokenization.
 
----
+Phase 1: Data Representation - Defining the Language
+----------------------------------------------------
 
-**Phase 1: Data Representation - Defining the Language**
+Goal: Create the vocabulary and grammar the model will use to read and write beatmaps. Choices here directly impact the model's learning ability and output quality.
 
-This is the most critical phase. We need to define the "language" (vocabulary of tokens) our model will use to "write" beatmaps.
+### Step 1.1: Define the Core Information to Capture
 
-**Step 1.1: Define the Core Information to Capture**
+-   Explanation: To faithfully represent beatmap gameplay and structure, we must capture all essential elements.
 
-We need tokens to represent:
-* Map boundaries (start/end)
-* Progression of time relative to the music
-* Object types (Circle, Slider, Spinner)
-* Object positions (X, Y)
-* Slider paths (Type, Anchor points, Repeats)
-* Spinner durations
-* Combo management (New Combo flag)
+-   Map Boundaries (SOS, EOS):
 
-**Step 1.2: Design the Token Vocabulary (Decision Point)**
+-   Rationale: Standard practice in sequence modeling. SOS (Start Of Sequence) provides a starting token for the decoder during generation. EOS (End Of Sequence) allows the model to learn when a map is complete, enabling variable-length generation.
 
-* **Decision:** Use a vocabulary based on *quantized parameters* and *separate tokens for actions vs. parameters*. This offers flexibility over huge single-token vocabularies (like `CIRCLE_X15_Y22`) and is more manageable than raw value regression within a sequence model.
-* **Justification:** Quantization makes the prediction task discrete (classification over tokens) and bounds the vocabulary size. Separating actions (like `PLACE_CIRCLE`) from parameters (like `COORD_X(15)`, `COORD_Y(22)`) allows the model to learn compositional structures more easily, even if it makes sequences longer.
-* **Proposed Vocabulary Categories:**
-    * **Special Tokens:**
-        * `PAD`: Padding token (for batching sequences of different lengths). ID: 0
-        * `SOS`: Start of Sequence (or Start of Map). ID: 1
-        * `EOS`: End of Sequence (or End of Map). ID: 2
-    * **Time Tokens:**
-        * `TIME_SHIFT(bin)`: Represents advancing time by a certain amount.
-            * **Decision:** Quantize the time difference (in milliseconds or audio frames) between consecutive objects into bins. Use logarithmic scaling for bins to capture fine timing for short gaps and coarser timing for long gaps.
-            * **Example:** 64 bins: `TIME_SHIFT_0` (e.g., 0-15ms), `TIME_SHIFT_1` (16-30ms), ..., `TIME_SHIFT_63` (e.g., >2000ms).
-            * **Justification:** Makes timing prediction discrete. Log scale reflects musical rhythm perception (smaller differences matter more at high speed). 64 bins is a manageable number.
-    * **Object Type & Action Tokens:**
-        * `NEW_COMBO`: Apply new combo flag to the *next* placed object.
-        * `PLACE_CIRCLE`: Signal placement of a circle (position follows).
-        * `START_SLIDER(type)`: Signal start of a slider. `type` could be L/B/P.
-            * **Decision:** Create separate tokens: `START_SLIDER_L`, `START_SLIDER_B`, `START_SLIDER_P`.
-            * **Justification:** Keeps the action space flat.
-        * `ADD_SLIDER_ANCHOR`: Signal that the next coordinate pair is a Bezier anchor or linear path point.
-        * `END_SLIDER(repeats)`: Signal end of slider definition. `repeats` is number of back-and-forth passes (0 = no repeat).
-            * **Decision:** Create tokens like `END_SLIDER_0R`, `END_SLIDER_1R`, ..., `END_SLIDER_4R` (limit max repeats for vocab size).
-            * **Justification:** Handles common repeat values discretely.
-        * `PLACE_SPINNER`: Signal placement of a spinner.
-        * `END_SPINNER(duration_bin)`: Provide spinner duration.
-            * **Decision:** Quantize duration into bins (e.g., 16 bins). `END_SPINNER_DUR0`, ..., `END_SPINNER_DUR15`.
-            * **Justification:** Keeps it discrete.
-    * **Coordinate Tokens:**
-        * `COORD_X(bin)`: Represents the X coordinate.
-        * `COORD_Y(bin)`: Represents the Y coordinate.
-            * **Decision:** Quantize the normalized playfield coordinates (0-1 range for both X and Y) into bins. Use 32 bins for each axis (0-31).
-            * **Justification:** $32 \times 32 = 1024$ possible locations, offering reasonable precision without excessive vocabulary. $32+32 = 64$ coordinate tokens needed in total (`COORD_X_0`...`COORD_X_31`, `COORD_Y_0`...`COORD_Y_31`). Precision is $512/32 = 16$ pixels on X, $384/32 \approx 12$ pixels on Y. Acceptable start.
-* **Total Vocabulary Size (Estimate):** 3 (Special) + 64 (Time) + 1 (NewCombo) + 1 (Circle) + 3 (SliderStart) + 1 (SliderAnchor) + 5 (SliderEnd) + 1 (Spinner) + 16 (SpinnerEnd) + 32 (CoordX) + 32 (CoordY) $\approx$ **160 tokens**. This is a very manageable size for a Transformer.
+-   Time Progression (TIME_SHIFT):
 
-**Step 1.3: Implement Tokenizer (`.osu` -> Token Sequence)**
+-   Rationale: Represents the temporal relationship between events. Encoding the difference in time makes the representation relative and potentially easier for the model to learn rhythmic patterns compared to absolute timestamps. It captures the "wait time" before the next action. Includes shifts between both hit objects and timing points.
 
-* **Input:** Path to an `.osu` file.
-* **Process:**
-    1.  Parse the `.osu` file robustly (hit objects, timing points, difficulty).
-    2.  Sort hit objects by time.
-    3.  Initialize token sequence with `SOS`.
-    4.  Iterate through sorted objects:
-        * Calculate time difference (`dt_ms`) from the previous object (or map start).
-        * Quantize `dt_ms` into a `TIME_SHIFT(bin)` token ID and append.
-        * If the object starts a new combo, append `NEW_COMBO` token ID.
-        * Append object type token(s):
-            * **Circle:** Append `PLACE_CIRCLE`. Append `COORD_X(bin)` and `COORD_Y(bin)` based on quantized object coordinates.
-            * **Slider:** Append `START_SLIDER(type)`. Append `COORD_X(bin)` and `COORD_Y(bin)` for the start point. Iterate through slider anchor points (relative coordinates `dx, dy`), quantize them, and for each, append `ADD_SLIDER_ANCHOR`, `COORD_X(bin_dx)`, `COORD_Y(bin_dy)`. Finally, determine repeats, clamp to max, and append `END_SLIDER(repeats)`.
-            * **Spinner:** Append `PLACE_SPINNER`. Calculate duration, quantize, and append `END_SPINNER(duration_bin)`.
-    5.  Append `EOS` token ID.
-* **Output:** A list or tensor of integer token IDs.
+-   Object Types (PLACE_CIRCLE, START_SLIDER_*, PLACE_SPINNER):
 
-**Step 1.4: Implement Detokenizer (Token Sequence -> `.osu`)**
+-   Rationale: These tokens represent the fundamental actions or object types available in osu!standard. Separating them allows the model to learn the distinct characteristics and subsequent parameters associated with each type.
 
-* **Input:** A sequence of predicted token IDs.
-* **Process:**
-    1.  Initialize state (current time, current position, active slider type, etc.).
-    2.  Iterate through token IDs (stopping at `EOS` or `PAD`):
-        * Decode token ID back into its meaning (e.g., using a dictionary lookup).
-        * **`TIME_SHIFT(bin)`:** Decode bin to get `dt_ms` (use bin center or start). Add `dt_ms` to the current time.
-        * **`NEW_COMBO`:** Set a flag to apply to the next object.
-        * **`PLACE_CIRCLE`:** Expect `COORD_X`, `COORD_Y` next. Decode coordinate bins to get (x, y) values (use bin center). Create circle object at current time + flags, add to object list. Reset flags.
-        * **`START_SLIDER(type)`:** Set active slider type. Expect start `COORD_X`, `COORD_Y` next. Store start point.
-        * **`ADD_SLIDER_ANCHOR`:** Expect `COORD_X`, `COORD_Y` next. Decode relative `dx, dy` bins. Add anchor point to current slider definition.
-        * **`END_SLIDER(repeats)`:** Finalize the current slider definition using stored points, type, and repeats. Create slider object at its start time, add to object list. Reset slider state.
-        * **`PLACE_SPINNER`:** Expect `END_SPINNER` next. Store start time.
-        * **`END_SPINNER(duration_bin)`:** Decode duration bin. Create spinner object. Reset flags.
-        * **`COORD_X`/`COORD_Y`:** Store the coordinate value, waiting for the action token (`PLACE_CIRCLE`, `START_SLIDER`, `ADD_SLIDER_ANCHOR`) that uses it.
-    3.  Format the generated object list, along with default/template metadata, timing, and difficulty sections, into a valid `.osu` string.
-* **Output:** A string containing the `.osu` file content.
+-   Object Positions (COORD_X, COORD_Y):
 
----
+-   Rationale: Essential for defining where interactions occur. Using separate X and Y tokens keeps the vocabulary smaller than combining them. Normalizing coordinates (0-1) makes the representation independent of playfield resolution. Using relative coordinates for slider anchors is hypothesized to help learn shape invariance (see Step 1.2).
 
-**Phase 2: Data Loading and Preprocessing**
+-   Slider Paths (START_SLIDER(type), ADD_SLIDER_ANCHOR, END_SLIDER(repeats)):
 
-**Step 2.1: Update `Dataset` and `DataLoader`**
+-   Rationale: Sliders are complex. We need tokens to signal the start (including type like Linear, Bezier), each anchor point defining the curve, and the end (including repeats). This structured approach breaks down slider creation into manageable steps for the sequence model.
 
-* **`BeatmapDataset.__getitem__(idx)`:**
-    1.  Load audio (`waveform`, `sample_rate`).
-    2.  Extract audio features (e.g., Mel Spectrogram `features`). Shape: `[audio_seq_len, n_mels]`.
-    3.  Parse corresponding `.osu` file.
-    4.  Extract difficulty tensor `difficulty_tensor` (e.g., `[AR, CS, OD, HP]`). Shape: `[4]`.
-    5.  **Use the Tokenizer (Step 1.3)** to convert the parsed `.osu` data into the `target_token_sequence`. Shape: `[target_seq_len]`.
-    6.  **Pad/Truncate:**
-        * Pad/truncate `features` to a fixed `max_audio_len`.
-        * Pad `target_token_sequence` with `PAD_ID` to a fixed `max_target_seq_len`. Prepend `SOS_ID` and append `EOS_ID` *before* padding/truncation if not handled by tokenizer.
-    7.  Return `(features, difficulty_tensor, target_token_sequence)`.
-* **`DataLoader`:** Use standard `DataLoader` with batching, shuffling, and `collate_fn` (default should work if padding is done in `Dataset`).
+-   Spinner Durations (END_SPINNER(duration)):
 
----
+-   Rationale: Spinners primarily require a duration. An end token carrying quantized duration information is efficient. Position is fixed (center).
 
-**Phase 3: Model Architecture (CNN Encoder + Transformer Decoder)**
+-   Combo Management (NEW_COMBO):
 
-**Step 3.1: CNN Encoder**
+-   Rationale: New combos affect scoring and visual grouping. A simple flag token before an object is placed is a straightforward way to represent this optional attribute.
 
-* **Purpose:** Process the audio features, capture local patterns, and reduce the sequence length to make the Transformer computationally feasible.
-* **Architecture:**
-    * Input: `features` `[batch, max_audio_len, n_mels]`
-    * Layers:
-        * Use several `nn.Conv1d` layers with `kernel_size=k`, `stride=s`, `padding=p`. Choose `s > 1` in some layers to downsample the sequence length (e.g., a total downsampling factor of 4 or 8).
-        * Apply `nn.ReLU` or `nn.GELU` activations.
-        * Use `nn.LayerNorm` or `nn.BatchNorm1d` for stabilization.
-        * A final `nn.Linear` layer to project the channel dimension to `d_model` (the Transformer's hidden dimension).
-    * Output: `audio_memory` `[batch, reduced_audio_len, d_model]`
+-   Timing Points (UNINHERITED_*, INHERITED_*, BEAT_LENGTH_BIN_*, SLIDER_VELOCITY_BIN_*, TIME_SIGNATURE_*, EFFECT_KIAI_*):
 
-**Step 3.2: Difficulty Embedding**
+-   Rationale: To capture rhythmic and difficulty variations within a map, changes in BPM (via beat length), Slider Velocity (SV), Time Signature, and Kiai need to be encoded. Separate tokens indicate the type of timing point and subsequent tokens carry the quantized value or state.
 
-* **Purpose:** Embed the difficulty settings into the model's working dimension.
-* **Architecture:**
-    * Input: `difficulty_tensor` `[batch, num_difficulty_features]` (e.g., `num_difficulty_features=4`)
-    * Layer: `nn.Linear(num_difficulty_features, d_model)`
-    * Output: `difficulty_embedding` `[batch, d_model]`
+### Step 1.2: Design the Token Vocabulary
 
-**Step 3.3: Token Embedding**
+-   Rationale: We aim for a balance between expressiveness and vocabulary size. A smaller vocabulary is generally easier for models to learn, but must still capture all necessary information.
 
-* **Purpose:** Embed the discrete input/target token IDs into dense vectors.
-* **Architecture:**
-    * Input: `target_token_sequence` (shifted right during training) `[batch, max_target_seq_len]`
-    * Layer: `nn.Embedding(vocab_size, d_model, padding_idx=PAD_ID)`
-    * Output: `token_embeddings` `[batch, max_target_seq_len, d_model]`
+-   Quantization:
 
-**Step 3.4: Positional Encoding**
+-   Rationale: Converts continuous values (time, position, beat length, SV) into discrete bins. This transforms the prediction task into classification (predicting the right bin/token), which is often easier for sequence models than regressing continuous values directly. It's essential for managing vocabulary size. The choice of quantization scale (linear vs. logarithmic) depends on the perceptual importance of the value (e.g., log for time/beat length where relative changes matter more, linear for position/SV where absolute changes might be more relevant).
 
-* **Purpose:** Inject information about the position of tokens in the sequence, as Transformers themselves don't process order inherently.
-* **Architecture:** Standard sinusoidal `PositionalEncoding` class (or learned embeddings). Add this to the `token_embeddings`.
+-   Separation (Action/Parameter Tokens):
 
-**Step 3.5: Transformer Decoder**
+-   Rationale: Using tokens like PLACE_CIRCLE followed by COORD_X(15) and COORD_Y(22) instead of a single combined token CIRCLE_X15_Y22 drastically reduces vocabulary size (e.g., 1 + 32 + 32 tokens vs. 1 * 32 * 32 tokens). It encourages the model to learn the compositional structure (action -> parameters). The trade-off is potentially longer sequences.
 
-* **Purpose:** Generate the output token sequence autoregressively, attending to both the audio memory and the previously generated tokens.
-* **Architecture:** `nn.TransformerDecoder` which internally uses `nn.TransformerDecoderLayer`.
-    * Inputs:
-        * `tgt`: The embedded target token sequence (shifted right, with positional encoding and added difficulty embedding). `[batch, max_target_seq_len, d_model]`.
-        * `memory`: The `audio_memory` from the CNN Encoder. `[batch, reduced_audio_len, d_model]`.
-        * `tgt_mask`: Mask to prevent attending to future target tokens (causal mask). Generate using `nn.Transformer.generate_square_subsequent_mask()`.
-        * `memory_mask`: Optional, mask for the encoder output.
-        * `tgt_key_padding_mask`: Mask to ignore `PAD` tokens in the target sequence attention. `[batch, max_target_seq_len]`.
-        * `memory_key_padding_mask`: Mask to ignore padding in the audio memory sequence. `[batch, reduced_audio_len]`.
-    * Parameters: `d_model`, `nhead`, `num_decoder_layers`, `dim_feedforward`, `dropout`.
-        * **Decision:** Start with standard values: `d_model=512`, `nhead=8`, `num_decoder_layers=6`, `dim_feedforward=2048`, `dropout=0.1`. Tune based on results.
-    * Output: `decoder_output` `[batch, max_target_seq_len, d_model]`
+-   Vocabulary Categories (Detailed):
 
-**Step 3.6: Output Head**
+-   Special Tokens: Standard practice for sequence modeling (Padding, Start, End).
 
-* **Purpose:** Project the Decoder's output back to the vocabulary space to get probabilities for the next token.
-* **Architecture:**
-    * Input: `decoder_output` `[batch, max_target_seq_len, d_model]`
-    * Layer: `nn.Linear(d_model, vocab_size)`
-    * Output: `output_logits` `[batch, max_target_seq_len, vocab_size]`
+-   Time Tokens (TIME_SHIFT(bin)): Logarithmic quantization captures the higher sensitivity to small timing changes at short intervals (e.g., 1/4 vs 1/3 beat) compared to the same absolute difference at longer intervals.
 
-**Step 3.7: Combining Difficulty (Decision Refinement)**
+-   Coordinate Tokens (COORD_X(bin), COORD_Y(bin)): Linear quantization is generally sufficient for screen position. Using the same bins for absolute start positions and relative anchor deltas (after appropriate normalization/scaling) keeps the vocabulary smaller, assuming the model can learn the context from the preceding tokens (START_SLIDER_* vs ADD_SLIDER_ANCHOR). 32x24 bins offer a reasonable precision trade-off (~16px on X, ~16px on Y).
 
-* **Decision:** Add the `difficulty_embedding` (unsqueezed to `[batch, 1, d_model]`) to the `token_embeddings` *before* adding positional encoding and feeding into the Decoder.
-* **Justification:** This conditions every step of the decoder's prediction on the target difficulty.
+-   Hit Object Action/Type Tokens: Clear, distinct tokens for each core action or object type. Slider types (L/B/P/C) are included for shape information.
 
----
+-   Timing Point Tokens:
 
-**Phase 4: Training**
+-   UNINHERITED/INHERITED: Distinguishes points that reset timing (BPM) from those that only modify SV relative to the current BPM. Essential for correct timing reconstruction.
 
-**Step 4.1: Loss Function**
+-   BEAT_LENGTH_BIN: Logarithmic quantization reflects that BPM changes are often perceived multiplicatively (e.g., 120->180 BPM is a bigger jump than 300->360 BPM in terms of feel).
 
-* **Decision:** `nn.CrossEntropyLoss`.
-* **Justification:** Standard loss for multi-class classification (predicting the next token ID).
-* **Setup:** Use `ignore_index=PAD_ID` to ignore padded parts of the target sequences.
+-   SLIDER_VELOCITY_BIN: Linear quantization is likely sufficient as SV changes are often additive or simple multipliers in practice.
 
-**Step 4.2: Optimizer**
+-   TIME_SIGNATURE: Only include common signatures to avoid excessive rare tokens. The model might struggle with very unusual meters anyway.
 
-* **Decision:** `torch.optim.AdamW`.
-* **Justification:** AdamW generally works well for Transformers, often better than standard Adam due to its handling of weight decay. Use a learning rate like `1e-4` or `3e-4` initially.
+-   EFFECT_KIAI: Simple ON/OFF state tokens are sufficient.
 
-**Step 4.3: Learning Rate Scheduler**
+-   Vocabulary Size Estimate: A concrete estimate helps gauge model complexity. ~350 tokens is manageable for modern Transformer architectures.
 
-* **Decision:** Use a scheduler, e.g., `torch.optim.lr_scheduler.ReduceLROnPlateau` (monitoring validation loss) or a warmup followed by cosine decay schedule.
-* **Justification:** Helps in finding a good minimum and stabilizing training, common practice for large Transformer models.
+### Step 1.3: Implement Tokenizer (.osu -> Token Sequence)
 
-**Step 4.4: Training Loop**
+-   Tooling (Node.js osu-parsers):
 
-1.  Set model to `train()` mode.
-2.  Loop through epochs.
-3.  Loop through batches from `DataLoader`.
-4.  Move data (`features`, `difficulty`, `targets`) to the appropriate device.
-5.  Prepare inputs for the Decoder:
-    * `decoder_input_tokens`: `targets` shifted right (prepend `SOS`, remove last token).
-    * `target_labels`: Original `targets` (for loss calculation).
-6.  Generate masks:
-    * `tgt_mask` (causal mask).
-    * `tgt_key_padding_mask` (based on `PAD_ID` in `decoder_input_tokens`).
-    * `memory_key_padding_mask` (based on padding in `features` *after* CNN downsampling).
-7.  Zero gradients (`optimizer.zero_grad()`).
-8.  **Forward Pass:**
-    * Pass `features` through CNN Encoder -> `audio_memory`.
-    * Embed `difficulty_tensor` -> `difficulty_embedding`.
-    * Embed `decoder_input_tokens` -> `token_embeddings`.
-    * Add difficulty and positional encoding to `token_embeddings` -> `decoder_input_embeddings`.
-    * Pass `decoder_input_embeddings`, `audio_memory`, and masks through Transformer Decoder -> `decoder_output`.
-    * Pass `decoder_output` through Output Head -> `output_logits`.
-9.  **Calculate Loss:** `loss = criterion(output_logits.view(-1, vocab_size), target_labels.view(-1))`.
-10. **Backward Pass:** `loss.backward()`.
-11. **Gradient Clipping:** `torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)` (helps prevent exploding gradients).
-12. **Optimizer Step:** `optimizer.step()`.
-13. Update LR scheduler.
-14. Log metrics (loss, learning rate, etc.).
-15. Run validation loop periodically.
+-   Rationale: osu-parsers is a robust, well-maintained library specifically designed for accurate parsing of .osu files, including complex slider paths and timing point details. Using it via a Node.js subprocess ensures high fidelity input data compared to potentially less complete Python parsers. Communication via JSON provides a structured way to pass complex data between languages.
 
----
+-   Input/Output: Standard file input, list/tensor output suitable for deep learning frameworks.
 
-**Phase 5: Inference (Generation)**
+-   Process:
 
-**Step 5.1: Setup**
+1.  Execute Node Parser: Necessary step to leverage the chosen library.
 
-1.  Set model to `eval()` mode.
-2.  Disable gradients (`with torch.no_grad():`).
-3.  Process input audio (`features`) through CNN Encoder once -> `audio_memory`.
-4.  Embed input `difficulty_tensor` -> `difficulty_embedding`.
-5.  Prepare masks for `audio_memory` if needed.
+2.  Receive JSON: Standard inter-process communication method.
 
-**Step 5.2: Autoregressive Generation Loop**
+3.  Combine & Sort Events:
 
-1.  Initialize the generated sequence with `SOS_ID`: `generated_tokens = [SOS_ID]`.
-2.  Loop until `EOS_ID` is generated or `max_target_seq_len` is reached:
-    * Get the current sequence tensor `current_input_tokens` from `generated_tokens`.
-    * Embed `current_input_tokens` -> `token_embeddings`.
-    * Add difficulty and positional encoding -> `decoder_input_embeddings`.
-    * Create `tgt_mask` (causal) and `tgt_key_padding_mask` for the *current* sequence length.
-    * Pass `decoder_input_embeddings`, `audio_memory`, and masks through Transformer Decoder -> `decoder_output`.
-    * Get the logits for the *last* time step: `next_token_logits = decoder_output[:, -1, :]`.
-    * **Apply Sampling Strategy (Decision):**
-        * **Greedy:** `next_token_id = torch.argmax(next_token_logits, dim=-1)`. (Fastest, least diverse).
-        * **Nucleus Sampling (Top-p):** Recommended. Apply softmax, sort probabilities, keep top `p` percent cumulative probability, re-normalize, sample. Balances quality and diversity.
-        * **Top-k Sampling:** Simpler, keep top `k` logits, re-normalize, sample.
-        * **Beam Search:** Keep track of `k` most likely sequences, computationally more expensive but can yield higher quality.
-    * Append the chosen `next_token_id` to `generated_tokens`.
-    * If `next_token_id == EOS_ID`, break the loop.
+-   Rationale: Treat both hit objects and timing points as events in a single timeline. Sorting chronologically ensures the TIME_SHIFT token correctly represents the time since the immediately preceding event, regardless of its type. Processing control points before hit objects at the same timestamp matches how osu! applies timing changes.
 
-**Step 5.3: Detokenization**
+1.  Initialize: Standard sequence start.
 
-* Take the final `generated_tokens` sequence (excluding `SOS`/`EOS`/`PAD`).
-* Use the Detokenizer (Step 1.4) to convert the sequence of IDs back into an `.osu` file string.
+2.  Iterate Sorted Events:
 
----
+-   Time Shift: Calculated first for every event to establish its temporal position relative to the previous one.
 
-This detailed plan provides a robust foundation. Each step involves careful implementation and testing. The vocabulary design, tokenizer/detokenizer, and the training/inference loops are the most complex parts requiring significant attention to detail. Good luck!
+-   Control Point Event Logic: Emit tokens corresponding to the changes introduced by this control point (new BPM, new SV, Kiai toggle). This requires quantizing the relevant values (beat length, SV).
+
+-   Hit Object Event Logic: Emit tokens describing the object placement and properties. For sliders, the sequence (START, coords, ADD_ANCHOR, relative coords..., END) explicitly defines the structure. Calculating relative anchor coordinates requires tracking the previous absolute position.
+
+-   Update Time: Essential for calculating the next TIME_SHIFT.
+
+1.  Finalize: Add EOS, pad to fixed length for batch processing in the model.
+
+2.  Return: The final token sequence.
+
+### Step 1.4: Implement Detokenizer (Token Sequence -> .osu)
+
+-   Tooling (Python Reconstruction + Node.js Encoding):
+
+-   Rationale: Reconstructing the logical structure (lists of hit objects and control points) is easier in Python where the main model logic resides. However, correctly formatting the final .osu string, especially the [TimingPoints] and [HitObjects] sections with their specific syntax and interdependencies (like slider duration depending on timing), is complex and error-prone. Leveraging osu-parsers' BeatmapEncoder via a Node.js script ensures the output is valid and correctly formatted according to osu! standards. This separates the logical reconstruction (Python) from the strict formatting rules (Node.js).
+
+-   Input/Output: Token sequence in, .osu string out.
+
+-   Process:
+
+1.  Stage 1: Reconstruct Data (Python):
+
+-   Iterate through the cleaned token sequence.
+
+-   Maintain state (current time, pending objects, current timing values).
+
+-   Recognize tokens and dequantize values using the QuantizationManager.
+
+-   Build up hit_objects and control_points lists containing dictionaries of reconstructed properties. Handling pending states (like accumulating slider points before END_SLIDER) is key. Finalizing pending timing points before time shifts or new object starts ensures correct association.
+
+1.  Stage 2: Format .osu (Node.js):
+
+-   Pass the reconstructed lists as JSON to the Node script.
+
+-   Node script uses osu-parsers to create a Beatmap object.
+
+-   Populates the Beatmap object with metadata, difficulty, control points (creating TimingPoint, DifficultyPoint, etc. objects), and hit objects (creating HittableObject, SlidableObject, etc., and reconstructing SliderPath).
+
+-   Crucially calls applyDefaults(): This step within osu-parsers calculates derived properties like slider durations and tick points based on the added control points and difficulty settings.
+
+-   Uses BeatmapEncoder to generate the final, correctly formatted .osu string. Python returns this string.
+
+Phase 2: Data Loading and Preprocessing
+---------------------------------------
+
+Goal: Prepare the raw audio and parsed beatmap data for model training.
+
+### Step 2.1: Update Dataset and DataLoader
+
+-   BeatmapDataset (torch.utils.data.Dataset):
+
+-   Rationale: Standard PyTorch class for handling data loading. Each item represents one beatmap-audio pair.
+
+-   __getitem__(idx): Defines the loading and preprocessing pipeline for a single sample.
+
+1.  Audio Features: Mel Spectrogram is a common and effective audio representation for deep learning, capturing frequency content over time.
+
+2.  Parse & Tokenize: Uses the OsuToToken instance (from Phase 1) to convert the .osu file into the target token sequence the model needs to predict.
+
+3.  Difficulty Features: AR, CS, OD, HP directly influence map playability and structure. Providing them as input conditions the model's generation. Requires the Node parser to extract them.
+
+4.  Pad/Truncate: Necessary to create batches of uniform tensor shapes for efficient GPU processing. Padding masks inform the model which parts of the sequence are real data versus padding.
+
+-   DataLoader (torch.utils.data.DataLoader):
+
+-   Rationale: Standard PyTorch utility. Handles creating mini-batches from the Dataset, shuffling data for better training generalization, and potentially parallelizing data loading.
+
+Phase 3: Model Architecture (CNN Encoder + Transformer Decoder)
+---------------------------------------------------------------
+
+Goal: Define the neural network that learns the mapping from audio and difficulty to the beatmap token sequence.
+
+-   Step 3.1: CNN Encoder:
+
+-   Rationale: Processes the audio spectrogram. CNNs excel at capturing local patterns (like onsets, rhythmic motifs). Using strides reduces the sequence length of the audio representation, making the subsequent Transformer computationally less expensive (Transformers have quadratic complexity w.r.t. sequence length). Outputs a compressed, contextualized representation (audio_memory).
+
+-   Step 3.2: Difficulty Embedding:
+
+-   Rationale: Neural networks work with high-dimensional vectors. A simple linear layer transforms the low-dimensional difficulty features (e.g., 4 numbers) into the model's internal dimension (d_model), allowing them to be combined with other features.
+
+-   Step 3.3: Token Embedding:
+
+-   Rationale: Converts discrete token IDs into continuous vector representations that the network can process. nn.Embedding is the standard layer for this. padding_idx ensures PAD tokens don't affect learning.
+
+-   Step 3.4: Positional Encoding:
+
+-   Rationale: Transformers themselves don't inherently understand sequence order. Positional encoding injects information about the position of each token (absolute or relative) into its embedding, allowing the model to consider sequence structure. Sinusoidal encoding is a common, fixed method; learned embeddings are an alternative.
+
+-   Step 3.5: Transformer Decoder:
+
+-   Rationale: The core sequence generation component. It attends to the audio context (audio_memory via cross-attention) and the previously generated tokens (tgt via masked self-attention) to predict the next token in the sequence. The masked self-attention prevents the model from "cheating" by looking at future tokens during training. Multiple layers allow learning complex dependencies. Padding masks prevent attention calculations on padding tokens.
+
+-   Step 3.6: Output Head:
+
+-   Rationale: Maps the Transformer's final hidden state (in d_model dimensions) back to the size of the vocabulary. The output represents the model's predicted probability distribution (logits) over all possible next tokens.
+
+-   Step 3.7: Combining Difficulty:
+
+-   Rationale: Adding the difficulty embedding to the token embeddings injects the difficulty context into every step of the decoding process. This allows the model to generate different patterns or densities based on the requested difficulty settings (AR, CS, OD, HP). Broadcasting (unsqueeze + expand) is needed to match dimensions.
+
+Phase 4: Training
+-----------------
+
+Goal: Optimize the model's parameters using the prepared data.
+
+-   Step 4.1: Loss Function (nn.CrossEntropyLoss):
+
+-   Rationale: Standard loss function for multi-class classification problems (predicting the next token from the vocabulary). It combines LogSoftmax and Negative Log Likelihood, suitable for comparing the model's output logits with the target token IDs. ignore_index=PAD_ID is crucial to prevent calculating loss on padding tokens.
+
+-   Step 4.2: Optimizer (torch.optim.AdamW):
+
+-   Rationale: AdamW is an effective and widely used optimizer for training deep neural networks, particularly Transformers. It adapts learning rates per parameter and includes decoupled weight decay, often leading to better generalization than standard Adam.
+
+-   Step 4.3: Learning Rate Scheduler:
+
+-   Rationale: Adjusting the learning rate during training is critical. Starting high helps escape local minima, while decreasing it later allows for finer convergence. Schedulers automate this process (e.g., reducing LR when validation loss plateaus, or using a predefined warmup/decay schedule).
+
+-   Step 4.4: Training Loop:
+
+-   Rationale: Implements the standard training procedure.
+
+-   Teacher Forcing: During training, the decoder receives the ground truth previous token as input (shifted right), not its own prediction. This stabilizes training early on.
+
+-   Masks: Essential for the Transformer decoder (causal mask for self-attention, padding masks for self- and cross-attention) to ensure correct information flow and prevent attending to padding.
+
+-   Forward/Backward Pass: Standard steps for calculating output, loss, and gradients.
+
+-   Gradient Clipping: Prevents exploding gradients, a common issue in training deep networks, by capping the norm of the gradients.
+
+-   Optimizer/Scheduler Steps: Update model weights and learning rate.
+
+Phase 5: Inference (Generation)
+-------------------------------
+
+Goal: Use the trained model to create new beatmaps.
+
+-   Step 5.1: Setup:
+
+-   Rationale: model.eval() disables dropout/batchnorm updates. torch.no_grad() disables gradient calculation, saving memory and computation as gradients aren't needed for inference. Pre-computing audio encoding is efficient as it only needs to be done once per generation.
+
+-   Step 5.2: Autoregressive Generation Loop:
+
+-   Rationale: Generation happens one token at a time. The model predicts the next token based on the audio, difficulty, and all previously generated tokens. This is the "autoregressive" property.
+
+-   Initialize with SOS_ID.
+
+-   In the loop: Feed the current sequence to the decoder, get logits for the next token.
+
+-   Sampling Strategy: Choose how to select the next token from the probability distribution (logits). Greedy is simple but repetitive. Top-k/Top-p (Nucleus) offer a balance between coherence and diversity by sampling from a truncated distribution. Beam search explores multiple possibilities but is more complex. Top-p is often a good default.
+
+-   Append the sampled token and repeat until EOS_ID or max_length.
+
+-   Step 5.3: Detokenization:
+
+-   Rationale: Convert the generated sequence of token IDs back into a human-readable and usable format.
+
+-   Clean the sequence (remove special tokens).
+
+-   Use the TokenToOsu instance (from Phase 1) and its get_osu_string method. This handles the two-stage process: Python reconstructs the structured data (hit objects, control points), and the Node.js script formats it into the final .osu string using osu-parsers. This ensures the output is valid.
+
+This updated plan provides a comprehensive approach, incorporating the osu-parsers library and handling timing point information throughout the tokenization and detokenization process.

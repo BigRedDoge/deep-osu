@@ -1,13 +1,21 @@
+# dataloader_utils/quantizers.py
 import math
-import numpy as np
+import numpy as np # Using numpy for logspace/linspace
 
-class Quantizers:
+class QuantizationManager:
     def __init__(self, vocab):
+        """
+        Initializes the quantization manager.
+
+        Args:
+            vocab (BeatmapVocabulary): The vocabulary instance containing bin counts and ranges.
+        """
         self.vocab = vocab
-        # Define ranges/parameters for quantization based on vocab or defaults
+
+        # --- Define Ranges for Quantization ---
+        # Time Shift (Example: Logarithmic, 1ms to 10 seconds)
         self.time_shift_min_ms = 1.0
         self.time_shift_max_ms = 10000.0
-        
         # Precompute logspace edges for time shift for faster lookup
         # Add epsilon to max to ensure max value falls into last bin
         self.time_shift_log_edges = np.logspace(
@@ -22,14 +30,14 @@ class Quantizers:
         # Relative Coordinates (Linear, -max_delta to +max_delta pixels)
         # Range is defined by vocab.slider_max_relative_delta
 
-        # Spinner Duration (Linear, 0ms to 10 seconds)
+        # Spinner Duration (Linear, e.g., 0ms to 10 seconds)
         self.spinner_min_ms = 0.0
         self.spinner_max_ms = 10000.0
 
-        # Beat Length (Logarithmic, 30ms to 1000ms)
-        # Corresponds roughly to 30 BPM to 1000 BPM
+        # --- NEW: Beat Length (Logarithmic, e.g., 30ms to 2000ms) ---
+        # Corresponds roughly to 30 BPM to 2000 BPM
         self.beat_length_min_ms = 30.0
-        self.beat_length_max_ms = 1000.0
+        self.beat_length_max_ms = 2000.0
         # Add epsilon for inclusion
         self.beat_length_log_edges = np.logspace(
             np.log10(self.beat_length_min_ms),
@@ -37,7 +45,7 @@ class Quantizers:
             num=self.vocab.beat_length_bins + 1
         )
 
-        #Slider Velocity (Linear, 0.1x to 4.0x)
+        # --- NEW: Slider Velocity (Linear, e.g., 0.1x to 4.0x) ---
         self.sv_min = 0.1
         self.sv_max = 4.0
         # Precompute linspace edges for SV
@@ -47,9 +55,7 @@ class Quantizers:
             num=self.vocab.slider_velocity_bins + 1
         )
 
-        self.playfield_width = 512
-        self.playfield_height = 384
-
+    # --- Helper for finding bin index ---
     def _find_bin(self, value, edges):
         """Finds the bin index for a value given precomputed bin edges."""
         # np.searchsorted returns the index where value would be inserted to maintain order
@@ -60,6 +66,7 @@ class Quantizers:
         num_bins = len(edges) - 1
         return max(0, min(bin_index, num_bins - 1))
 
+    # --- Helper for getting bin midpoint ---
     def _get_bin_midpoint(self, bin_index, edges):
         """Gets the midpoint value of a given bin index."""
         if bin_index < 0 or bin_index >= len(edges) - 1:
@@ -75,44 +82,24 @@ class Quantizers:
              return math.sqrt(bin_start * bin_end) # Geometric mean
         else:
              return (bin_start + bin_end) / 2.0 # Arithmetic mean
-        
+
+
+    # --- Existing Quantization Methods (Updated to use helpers) ---
+
     def quantize_time_shift(self, dt_ms):
         """Quantizes time shift using precomputed logspace edges."""
         return self._find_bin(dt_ms, self.time_shift_log_edges)
-    
-    def dequantize_time_shift(self, bin_index):
-        """Dequantizes time shift bin index to approximate ms (geometric mean)."""
-        return self._get_bin_midpoint(bin_index, self.time_shift_log_edges)
 
-    def quantize_coord(self, val, axis):
+    def quantize_coord(self, norm_val, axis):
         """Quantizes normalized coordinate (linear)."""
-        if axis not in ['x', 'y']:
-            raise ValueError("Invalid axis. Use 'x' or 'y'.")
-        
         bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
-        norm_val = val / (self.playfield_width if axis == 'x' else self.playfield_height)
         # Linear quantization: scale 0-1 value to 0-bins range
         bin_index = int(norm_val * bins)
         # Clamp to handle norm_val == 1.0
         return max(0, min(bin_index, bins - 1))
-    
-    def dequantize_coord(self, bin_index, axis):
-        """Dequantizes coordinate bin index to normalized value (arithmetic mean)."""
-        if axis not in ['x', 'y']:
-            raise ValueError("Invalid axis. Use 'x' or 'y'.")
-        
-        bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
-        # Create temporary linear edges for dequantization
-        linear_edges = np.linspace(0.0, 1.0, num=bins + 1)
-        norm_val = self._get_bin_midpoint(bin_index, linear_edges)
-        # Convert to absolute coordinate
-        return norm_val * (self.playfield_width if axis == 'x' else self.playfield_height)
-    
+
     def quantize_relative_coord(self, delta, axis):
         """Quantizes relative coordinate delta (linear)."""
-        if axis not in ['x', 'y']:
-            raise ValueError("Invalid axis. Use 'x' or 'y'.")
-        
         bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
         max_delta = self.vocab.slider_max_relative_delta
         # Normalize delta from [-max_delta, +max_delta] to [0, 1]
@@ -122,30 +109,10 @@ class Quantizers:
         bin_index = int(norm_01_clipped * bins)
         # Clamp to handle norm_01_clipped == 1.0
         return max(0, min(bin_index, bins - 1))
-    
-    def dequantize_relative_coord(self, bin_index, axis):
-        """Dequantizes relative coordinate bin index to pixel delta (arithmetic mean)."""
-        if axis not in ['x', 'y']:
-            raise ValueError("Invalid axis. Use 'x' or 'y'.")
-        
-        bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
-        max_delta = self.vocab.slider_max_relative_delta
-        # Create temporary linear edges for the normalized [0, 1] range
-        norm_edges = np.linspace(0.0, 1.0, num=bins + 1)
-        # Get midpoint in normalized [0, 1] range
-        norm_01 = self._get_bin_midpoint(bin_index, norm_edges)
-        # Convert back to [-max_delta, +max_delta] range
-        delta = (norm_01 * 2.0 - 1.0) * max_delta
-        return delta
-    
+
     def quantize_slider_repeats(self, repeats):
         """Quantizes slider repeats (usually just clamping)."""
         return max(0, min(repeats, self.vocab.max_slider_repeats))
-
-    def dequantize_slider_repeats(self, bin_index):
-        """Dequantizes slider repeats bin index (identity)."""
-        # Bin index directly corresponds to the number of repeats
-        return max(0, min(bin_index, self.vocab.max_slider_repeats)) 
 
     def quantize_spinner_duration(self, duration_ms):
         """Quantizes spinner duration (linear)."""
@@ -154,18 +121,11 @@ class Quantizers:
         bin_index = int(norm_dur_clipped * self.vocab.spinner_duration_bins)
         return max(0, min(bin_index, self.vocab.spinner_duration_bins - 1))
 
-    def dequantize_spinner_duration(self, bin_index):
-        """Dequantizes spinner duration bin index to approximate ms (arithmetic mean)."""
-        linear_edges = np.linspace(self.spinner_min_ms, self.spinner_max_ms, num=self.vocab.spinner_duration_bins + 1)
-        return self._get_bin_midpoint(bin_index, linear_edges)
-    
+    # --- NEW Quantization Methods ---
+
     def quantize_beat_length(self, beat_length_ms):
         """Quantizes beat length (ms) using precomputed logspace edges."""
         return self._find_bin(beat_length_ms, self.beat_length_log_edges)
-
-    def dequantize_beat_length(self, bin_index):
-        """Dequantizes beat length bin index to approximate ms (geometric mean)."""
-        return self._get_bin_midpoint(bin_index, self.beat_length_log_edges)
 
     def quantize_slider_velocity(self, sv_multiplier):
         """Quantizes slider velocity multiplier using precomputed linear edges."""
@@ -176,10 +136,49 @@ class Quantizers:
         positive_multiplier = max(self.sv_min, min(sv_multiplier, self.sv_max)) # Clamp to defined range
         return self._find_bin(positive_multiplier, self.sv_linear_edges)
 
+    # --- Existing Dequantization Methods (Updated to use helpers) ---
+
+    def dequantize_time_shift(self, bin_index):
+        """Dequantizes time shift bin index to approximate ms (geometric mean)."""
+        return self._get_bin_midpoint(bin_index, self.time_shift_log_edges)
+
+    def dequantize_coord(self, bin_index, axis):
+        """Dequantizes coordinate bin index to normalized value (arithmetic mean)."""
+        bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
+        # Create temporary linear edges for dequantization
+        linear_edges = np.linspace(0.0, 1.0, num=bins + 1)
+        return self._get_bin_midpoint(bin_index, linear_edges)
+
+    def dequantize_relative_coord(self, bin_index, axis):
+        """Dequantizes relative coordinate bin index to pixel delta (arithmetic mean)."""
+        bins = self.vocab.coord_x_bins if axis == 'x' else self.vocab.coord_y_bins
+        max_delta = self.vocab.slider_max_relative_delta
+        # Create temporary linear edges for the normalized [0, 1] range
+        norm_edges = np.linspace(0.0, 1.0, num=bins + 1)
+        # Get midpoint in normalized [0, 1] range
+        norm_01 = self._get_bin_midpoint(bin_index, norm_edges)
+        # Convert back to [-max_delta, +max_delta] range
+        delta = (norm_01 * 2.0 - 1.0) * max_delta
+        return delta
+
+    def dequantize_slider_repeats(self, bin_index):
+        """Dequantizes slider repeats bin index (identity)."""
+        # Bin index directly corresponds to the number of repeats
+        return max(0, min(bin_index, self.vocab.max_slider_repeats)) # Clamp just in case
+
+    def dequantize_spinner_duration(self, bin_index):
+        """Dequantizes spinner duration bin index to approximate ms (arithmetic mean)."""
+        linear_edges = np.linspace(self.spinner_min_ms, self.spinner_max_ms, num=self.vocab.spinner_duration_bins + 1)
+        return self._get_bin_midpoint(bin_index, linear_edges)
+
+    # --- NEW Dequantization Methods ---
+
+    def dequantize_beat_length(self, bin_index):
+        """Dequantizes beat length bin index to approximate ms (geometric mean)."""
+        return self._get_bin_midpoint(bin_index, self.beat_length_log_edges)
+
     def dequantize_slider_velocity(self, bin_index):
-        """
-        Dequantizes slider velocity bin index to the approximate positive multiplier
-        using the arithmetic mean of the bin edges.
-        """
-        # Calculate the midpoint of the bin corresponding to the index
+        """Dequantizes slider velocity bin index to multiplier (arithmetic mean)."""
+        # Returns the positive multiplier (e.g., 1.5 for 1.5x)
         return self._get_bin_midpoint(bin_index, self.sv_linear_edges)
+
