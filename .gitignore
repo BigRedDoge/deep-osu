@@ -9,7 +9,6 @@ __pycache__/
 # Node
 node_modules
 
-harmony
 harmony.zip
 
 # C extensions
