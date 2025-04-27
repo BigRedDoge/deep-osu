@@ -1,0 +1,49 @@
+﻿osu file format v14
+[General]
+AudioFilename: audio.mp3
+AudioLeadIn: 0
+PreviewTime: -1
+Countdown: 0
+SampleSet: Normal
+StackLeniency: 0.7
+Mode: 0
+LetterboxInBreaks: 0
+WidescreenStoryboard: 1
+
+[Editor]
+DistanceSpacing: 1.0
+BeatDivisor: 4
+GridSize: 4
+TimelineZoom: 1
+
+[Metadata]
+Title:Genserated Map
+TitleUnicode:Genserated Map
+Artist:Unknown Artist
+ArtistUnicode:Unknown Artist
+Creator:AI
+Version:Normal
+Source:
+Tags:generated ai
+BeatmapID:0
+BeatmapSetID:-1
+
+[Difficulty]
+HPDrainRate:5.0
+CircleSize:3.5
+OverallDifficulty:4.44
+ApproachRate:7.5
+SliderMultiplier:1.5
+SliderTickRate:1.0
+
+[Events]
+//Background and Video events
+// Default black background
+0,0,"",0,0
+
+[TimingPoints]
+# time,beatLength,meter,sampleSet,sampleIndex,volume,uninherited,effects
+0,500.0,4,1,0,100,1,0
+
+[HitObjects]
+

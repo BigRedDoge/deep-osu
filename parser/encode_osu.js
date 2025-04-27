@@ -153,10 +153,12 @@ async function encodeBeatmapFromInput() {
                     }
 
                     console.warn("DEBUG: Assigning common properties...");
-                    hitObject.startTime = startTime; hitObject.startPosition = startPos; hitObject.hitType = currentHitType; hitObject.hitSound = hitSound;
+                    hitObject.startTime = startTime
+                    hitObject.startPosition = startPos
+                    hitObject.hitType = currentHitType
+                    hitObject.hitSound = hitSound;
                     hitObject.samples = [new HitSample()]; // Create default samples
                     hitObject.samples[0].sampleSet = SampleSet.Normal;
-                    hitObject.samples[0].hitSound = HitSound.Normal;
                     console.log(hitObject);
                     console.warn(`DEBUG: Properties assigned: time=${hitObject.startTime}, type=${hitObject.hitType}`);
 
