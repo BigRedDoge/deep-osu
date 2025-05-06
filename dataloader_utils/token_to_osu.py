@@ -153,8 +153,10 @@ class TokenToOsu:
                          bl_ms = self.quantizers.dequantize_beat_length(bl_bin)
                          self.pending_timing_data['beatLength'] = bl_ms
                          self.current_beat_length = bl_ms # Update overall state
-                     except Exception as e: print(f"Error processing beat length token '{token_str}': {e}")
-                 else: print(f"Warning: Beat length token '{token_str}' found without pending timing point.")
+                     except Exception as e: 
+                         print(f"Error processing beat length token '{token_str}': {e}")
+                 else: 
+                     print(f"Warning: Beat length token '{token_str}' found without pending timing point.")
             elif token_str.startswith("SLIDER_VELOCITY_BIN_"):
                  if self.pending_timing_point_type:
                      try:
@@ -162,16 +164,20 @@ class TokenToOsu:
                          sv_mult = self.quantizers.dequantize_slider_velocity(sv_bin)
                          self.pending_timing_data['sliderVelocity'] = sv_mult
                          self.current_sv_multiplier = sv_mult # Update overall state
-                     except Exception as e: print(f"Error processing SV token '{token_str}': {e}")
-                 else: print(f"Warning: SV token '{token_str}' found without pending timing point.")
+                     except Exception as e: 
+                         print(f"Error processing SV token '{token_str}': {e}")
+                 else: 
+                     print(f"Warning: SV token '{token_str}' found without pending timing point.")
             elif token_str.startswith("TIME_SIGNATURE_"):
                  if self.pending_timing_point_type == 'Uninherited': # Only applies to uninherited
                      try:
                          ts = int(token_str.split('_')[-1])
                          self.pending_timing_data['timeSignature'] = ts
                          self.current_time_signature = ts # Update overall state
-                     except Exception as e: print(f"Error processing TS token '{token_str}': {e}")
-                 else: print(f"Warning: Time signature token '{token_str}' found without pending uninherited timing point.")
+                     except Exception as e: 
+                         print(f"Error processing TS token '{token_str}': {e}")
+                 else: 
+                     print(f"Warning: Time signature token '{token_str}' found without pending uninherited timing point.")
 
             # --- Handle Hit Object Tokens (after finalizing any pending timing point) ---
             elif token_str == "NEW_COMBO":
@@ -210,12 +216,20 @@ class TokenToOsu:
             # --- Handle Coordinate Tokens ---
             elif token_str.startswith("COORD_X_"):
                  # Coords belong to pending object, don't finalize timing point
-                 try: self.pending_x_bin = int(token_str.split('_')[-1]); self._try_process_coordinates()
-                 except Exception as e: print(f"Error parsing X coord token '{token_str}': {e}"); self.pending_x_bin = None
+                 try: 
+                     self.pending_x_bin = int(token_str.split('_')[-1])
+                     self._try_process_coordinates()
+                 except Exception as e:
+                    print(f"Error parsing X coord token '{token_str}': {e}")
+                    self.pending_x_bin = None
             elif token_str.startswith("COORD_Y_"):
                  # Coords belong to pending object, don't finalize timing point
-                 try: self.pending_y_bin = int(token_str.split('_')[-1]); self._try_process_coordinates()
-                 except Exception as e: print(f"Error parsing Y coord token '{token_str}': {e}"); self.pending_y_bin = None
+                 try: 
+                    self.pending_y_bin = int(token_str.split('_')[-1])
+                    self._try_process_coordinates()
+                 except Exception as e:
+                    print(f"Error parsing Y coord token '{token_str}': {e}")
+                    self.pending_y_bin = None
 
             # --- Handle Object End Tokens ---
             elif token_str.startswith("END_SLIDER_"):
@@ -229,7 +243,9 @@ class TokenToOsu:
                          print(f"Error processing slider end token '{token_str}': {e}")
                          self.current_slider_data = None # Discard incomplete slider
                  else: print(f"Warning: END_SLIDER token ignored at {self.current_time_ms:.0f} (no active slider).")
-                 self.pending_object_type = None; self.pending_x_bin = None; self.pending_y_bin = None # Reset state
+                 self.pending_object_type = None
+                 self.pending_x_bin = None
+                 self.pending_y_bin = None # Reset state
             elif token_str.startswith("END_SPINNER_DUR"):
                  # End token belongs to spinner, don't finalize timing point
                  if self.pending_object_type == 'spinner':
@@ -240,7 +256,8 @@ class TokenToOsu:
                              'object_type': 'Spinner',
                              'time': round(self.spinner_start_time),
                              'end_time': round(self.spinner_start_time + duration_ms),
-                             'x': 256, 'y': 192, # Fixed position
+                             'x': 256,
+                             'y': 192, # Fixed position
                              'is_new_combo': self.new_combo_pending
                          }
                          self.hit_objects.append(spinner_obj)
@@ -258,6 +275,7 @@ class TokenToOsu:
         self._finalize_previous_object()    # Finalize any hit object pending at the end
 
         print(f"Detokenization complete. Reconstructed {len(self.hit_objects)} hit objects and {len(self.control_points)} control points.")
+        print(self.hit_objects)
         return self.hit_objects, self.control_points # Return both lists
 
     def _try_process_coordinates(self):
@@ -270,19 +288,30 @@ class TokenToOsu:
         if self.pending_x_bin is None or self.pending_y_bin is None: return # Safety check
         try:
             if self.pending_object_type == 'circle':
-                abs_x = self.quantizers.dequantize_coord(self.pending_x_bin, 'x'); abs_y = self.quantizers.dequantize_coord(self.pending_y_bin, 'y')
-                circle_obj = {'object_type': 'Circle', 'time': round(self.current_time_ms), 'x': abs_x, 'y': abs_y, 'is_new_combo': self.new_combo_pending}
-                self.hit_objects.append(circle_obj); self.new_combo_pending = False
+                abs_x = self.quantizers.dequantize_coord(self.pending_x_bin, 'x')
+                abs_y = self.quantizers.dequantize_coord(self.pending_y_bin, 'y')
+                circle_obj = {
+                    'object_type': 'Circle', 
+                    'time': round(self.current_time_ms), 
+                    'x': abs_x, 
+                    'y': abs_y, 
+                    'is_new_combo': self.new_combo_pending
+                }
+                self.hit_objects.append(circle_obj)
+                self.new_combo_pending = False
             elif self.pending_object_type == 'slider_start':
                  if self.current_slider_data:
-                    abs_x = self.quantizers.dequantize_coord(self.pending_x_bin, 'x'); abs_y = self.quantizers.dequantize_coord(self.pending_y_bin, 'y')
+                    abs_x = self.quantizers.dequantize_coord(self.pending_x_bin, 'x')
+                    abs_y = self.quantizers.dequantize_coord(self.pending_y_bin, 'y')
                     self.current_slider_data['points'].append({'x': abs_x, 'y': abs_y})
                  else: print("Error: Slider start coords without slider data.")
             elif self.pending_object_type == 'slider_anchor':
                 if self.current_slider_data and self.current_slider_data['points']:
-                    dx = self.quantizers.dequantize_relative_coord(self.pending_x_bin, 'x'); dy = self.quantizers.dequantize_relative_coord(self.pending_y_bin, 'y')
+                    dx = self.quantizers.dequantize_relative_coord(self.pending_x_bin, 'x')
+                    dy = self.quantizers.dequantize_relative_coord(self.pending_y_bin, 'y')
                     last_point = self.current_slider_data['points'][-1]
-                    new_x = round(last_point['x'] + dx); new_y = round(last_point['y'] + dy)
+                    new_x = round(last_point['x'] + dx)
+                    new_y = round(last_point['y'] + dy)
                     self.current_slider_data['points'].append({'x': new_x, 'y': new_y})
                 else: print("Error: Slider anchor coords without valid slider data.")
             # Reset pending state after processing coordinates
@@ -301,7 +330,8 @@ class TokenToOsu:
                 slider_obj = {
                     'object_type': 'Slider',
                     'time': round(self.current_slider_data['start_time']),
-                    'x': start_point['x'], 'y': start_point['y'],
+                    'x': start_point['x'], 
+                    'y': start_point['y'],
                     'is_new_combo': self.current_slider_data['is_new_combo'],
                     'slider_type_char': self.current_slider_data['type'], # L, B, P, C
                     'repeats': self.current_slider_data['repeats'],
@@ -356,7 +386,8 @@ class TokenToOsu:
         except TypeError as e: print(f"Error serializing payload to JSON: {e}"); return None
 
         try:
-            command = ['node', str(self.node_encoder_path)]; cwd_path = self.node_encoder_path.parent
+            command = ['node', str(self.node_encoder_path)]
+            cwd_path = self.node_encoder_path.parent
             print(f"DEBUG: Calling Node encoder: {' '.join(command)}")
 
             result = subprocess.run(command, input=payload_json, capture_output=True, text=True, encoding='utf-8', check=True, cwd=cwd_path, timeout=30)

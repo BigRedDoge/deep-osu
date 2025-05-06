@@ -126,7 +126,8 @@ class OsuToToken:
 
         # --- Iterate Through Sorted Events ---
         # Removed current_kiai_state tracking
-
+        with open("osu_contents", 'w') as f:
+            f.write(json.dumps(events, indent=4))
         for event in events:
             if sequence_full: break
 

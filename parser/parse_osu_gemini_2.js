@@ -69,7 +69,7 @@ async function parseAndOutputBeatmap() {
                     }
                      // Inherit sample info from sample point at same time if exists
                     const samplePoint = beatmap.controlPoints.samplePointAt(cp.startTime);
-                     if (samplePoint && samplePoint.startTime === cp.startTime) {
+                    if (samplePoint && samplePoint.startTime === cp.startTime) {
                         cpData.sampleSet = samplePoint.sampleSet?.toString() ?? 'None';
                         cpData.customIndex = samplePoint.customSampleIndex ?? 0;
                         cpData.volume = samplePoint.volume ?? 100;
@@ -139,14 +139,46 @@ async function parseAndOutputBeatmap() {
                     startY: ho.startPosition.y,
                     isNewCombo: false,
                 };
-                if (ho instanceof HittableObject) { baseData.objectType = 'Circle'; baseData.isNewCombo = ho.isNewCombo; }
-                else if (ho instanceof SlidableObject) {
-                    baseData.objectType = 'Slider'; baseData.isNewCombo = ho.isNewCombo; baseData.repeats = ho.repeats;
-                    const curveType = PathType[ho.path.curveType]; let curveTypeChar = 'B';
-                    switch(curveType) { case 'Linear': curveTypeChar = 'L'; break; case 'PerfectCurve': curveTypeChar = 'P'; break; case 'Catmull': curveTypeChar = 'C'; break; case 'Bezier': curveTypeChar = 'B'; break; }
-                    baseData.path = { curveTypeChar: curveTypeChar, controlPoints: ho.path.controlPoints.map(cp => ({ x: cp.position.x, y: cp.position.y })), expectedDistance: ho.path.expectedDistance };
+                if (ho instanceof HittableObject) {
+                    baseData.objectType = 'Circle'; 
+                    baseData.isNewCombo = ho.isNewCombo; 
+                } else if (ho instanceof SlidableObject) {
+                    baseData.objectType = 'Slider'; 
+                    baseData.isNewCombo = ho.isNewCombo; 
+                    baseData.repeats = ho.repeats;
+                    /*
+                    const curveType = PathType[ho.path.curveType]; 
+                    let curveTypeChar = 'B';
+                    */
+                    const curveType = ho.path.curveType; 
+                    let curveTypeChar = 'B';
+                    switch(curveType) { 
+                        case PathType.Linear: 
+                            curveTypeChar = 'L'; 
+                            break; 
+                        case PathType.PerfectCurve: 
+                            curveTypeChar = 'P'; 
+                            break; 
+                        case PathType.Catmull: 
+                            curveTypeChar = 'C';
+                            break; 
+                        case PathType.Bezier: 
+                            curveTypeChar = 'B'; 
+                            break; 
+                    }
+                    baseData.path = { 
+                        curveTypeChar: curveTypeChar, 
+                        controlPoints: ho.path.controlPoints.map(cp => ({ 
+                            x: cp.position.x, y: cp.position.y 
+                        })), 
+                        expectedDistance: ho.path.expectedDistance 
+                    };
                 }
-                else if (ho instanceof SpinnableObject) { baseData.objectType = 'Spinner'; baseData.isNewCombo = ho.isNewCombo; baseData.endTime = ho.endTime; }
+                else if (ho instanceof SpinnableObject) { 
+                    baseData.objectType = 'Spinner'; 
+                    baseData.isNewCombo = ho.isNewCombo; 
+                    baseData.endTime = ho.endTime; 
+                }
                 return baseData;
             })
         };
